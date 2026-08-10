@@ -1,0 +1,25 @@
+{
+	"name": "toen-content",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"packageManager": "pnpm@11.15.1",
+	"scripts": {
+		"biome": "biome check .",
+		"typecheck": "tsc --noEmit",
+		"test": "vitest run",
+		"validate": "tsx scripts/validate.ts",
+		"verify": "pnpm biome && pnpm typecheck && pnpm test && pnpm validate"
+	},
+	"dependencies": {
+		"yaml": "2.9.0",
+		"zod": "4.4.3"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "2.5.7",
+		"@types/node": "24.10.1",
+		"tsx": "4.21.0",
+		"typescript": "5.9.3",
+		"vitest": "4.1.10"
+	}
+}
