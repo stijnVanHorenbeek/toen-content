@@ -39,6 +39,21 @@ describe("event document validation", () => {
 		expect(event.body).toBe("Event body.");
 	});
 
+	it("accepts historical leap days without modern Gregorian assumptions", () => {
+		const document = replaceDocument(
+			"year: 1969\n  era: ce\n  precision: day\n  month: 7\n  day: 20",
+			"year: 1900\n  era: ce\n  precision: day\n  month: 2\n  day: 29",
+		);
+
+		expect(parseEventDocument("test-event.md", document).date).toEqual({
+			year: 1900,
+			era: "ce",
+			precision: "day",
+			month: 2,
+			day: 29,
+		});
+	});
+
 	it("rejects unknown frontmatter fields", () => {
 		const document = replaceDocument(
 			"title: Test event",
@@ -52,12 +67,103 @@ describe("event document validation", () => {
 		["invalid year", "year: 1969", "year: 0"],
 		["invalid era", "era: ce", "era: future"],
 		["invalid precision fields", "day: 20", "day: 32"],
+		["impossible historical day", "month: 7\n  day: 20", "month: 4\n  day: 31"],
 		["invalid source URL", "https://example.com/source", "not-a-url"],
+		[
+			"unsafe source protocol",
+			"https://example.com/source",
+			"ftp://example.com/source",
+		],
 		["empty source title", "title: Primary source", 'title: ""'],
+		["noncanonical topic ID", "wetenschap", "Café"],
+		["unknown profile ID", "algemeen", "onbekende-richting"],
 	])("rejects %s", (_name, from, to) => {
 		expect(() =>
 			parseEventDocument("test-event.md", replaceDocument(from, to)),
 		).toThrow();
+	});
+
+	it("accepts selected topic labels and rejects unrelated labels", () => {
+		const labeledDocument = replaceDocument(
+			"topics:\n  - wetenschap",
+			"topics:\n  - wetenschap\ntopicLabels:\n  wetenschap: Wetenschap",
+		);
+		expect(
+			parseEventDocument("test-event.md", labeledDocument).topicLabels,
+		).toEqual({
+			wetenschap: "Wetenschap",
+		});
+
+		const unrelatedLabel = labeledDocument.replace(
+			"wetenschap: Wetenschap",
+			"politiek: Politiek",
+		);
+		expect(() => parseEventDocument("test-event.md", unrelatedLabel)).toThrow();
+	});
+
+	it("accepts the canonical Markdown subset", () => {
+		const body = `## Tussenkop
+
+### Verdieping
+
+Tekst met *nadruk*, **sterke nadruk** en een [veilige link](https://example.com).
+
+> Een citaat.
+
+- Eerste punt
+- Tweede punt
+
+1. Eerste stap
+2. Tweede stap`;
+		const document = validDocument.replace("Event body.", body);
+
+		expect(parseEventDocument("test-event.md", document).body).toBe(body);
+	});
+
+	it("accepts canonical hard line breaks produced by the editor", () => {
+		const body = "Eerste regel.  \nTweede regel.";
+		const document = validDocument.replace("Event body.", body);
+
+		expect(parseEventDocument("test-event.md", document).body).toBe(body);
+	});
+
+	it("rejects a noncanonical document when it contains a hard line break", () => {
+		const body = "Eerste regel.  \nTweede regel.\n\n_tekst_";
+		const document = validDocument.replace("Event body.", body);
+
+		expect(() => parseEventDocument("test-event.md", document)).toThrow(
+			"unsupported Markdown",
+		);
+	});
+
+	it("rejects excessive Markdown nesting without overflowing the stack", () => {
+		const body = `${"> ".repeat(5_000)}Tekst`;
+		const document = validDocument.replace("Event body.", body);
+
+		expect(() => parseEventDocument("test-event.md", document)).toThrow(
+			"unsupported Markdown",
+		);
+	});
+
+	it.each([
+		["unsafe link", "[Link](javascript:alert(1))"],
+		["link title", '[Link](https://example.com "Titel")'],
+		["backslash hard line break", "Eerste regel.\\\nTweede regel."],
+		["three-space hard line break", "Eerste regel.   \nTweede regel."],
+		["CRLF hard line break", "Eerste regel.  \r\nTweede regel."],
+		["level-one heading", "# Hoofdtitel"],
+		["level-four heading", "#### Te diepe titel"],
+		["image", "![Beschrijving](https://example.com/image.jpg)"],
+		["inline code", "Gebruik `code`."],
+		["HTML", "<strong>Tekst</strong>"],
+		["reference link", "[Link][bron]\n\n[bron]: https://example.com"],
+		["thematic break", "---"],
+	])("rejects unsupported Markdown: %s", (_name, body) => {
+		const document = validDocument.replace("Event body.", body);
+
+		expect(() => parseEventDocument("test-event.md", document)).toThrow(
+			"unsupported Markdown",
+		);
 	});
 
 	it("rejects an empty Markdown body", () => {
