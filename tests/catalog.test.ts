@@ -1,9 +1,19 @@
 import { describe, expect, it } from "vitest";
+import { stringify } from "yaml";
 import {
 	loadEventCatalog,
 	parseEventDocument,
 	validateCatalogEntries,
 } from "../src/catalog.js";
+import {
+	beatSources,
+	contextDecisionBeat,
+	invalidBeatIdentityCases,
+	invalidBeatRouteCases,
+	invalidBeatStructuralCases,
+	sourceDuelBeat,
+	voteRevoteBeat,
+} from "./fixtures/interactive-beat.js";
 
 const validDocument = `---
 title: Test event
@@ -31,12 +41,71 @@ function replaceDocument(from: string, to: string): string {
 	return validDocument.replace(from, to);
 }
 
+function documentWithBeat(
+	beat: unknown,
+	sources: unknown = beatSources,
+): string {
+	const sourceAndBeatBlock = stringify(
+		{ sources, beat },
+		{ lineWidth: 0 },
+	).trimEnd();
+	return validDocument.replace(
+		"sources:\n  - title: Primary source\n    publisher: Test publisher\n    url: https://example.com/source",
+		sourceAndBeatBlock,
+	);
+}
+
 describe("event document validation", () => {
 	it("derives slug from canonical filename and parses valid content", () => {
 		const event = parseEventDocument("test-event.md", validDocument);
 
 		expect(event.slug).toBe("test-event");
 		expect(event.body).toBe("Event body.");
+	});
+
+	it("accepts a versioned vote-revote beat", () => {
+		expect(
+			parseEventDocument("test-event.md", documentWithBeat(voteRevoteBeat)),
+		).toMatchObject({ beat: voteRevoteBeat });
+	});
+
+	it.each([
+		["source duel", sourceDuelBeat],
+		["context-bound decision", contextDecisionBeat],
+	])("accepts a versioned %s beat", (_name, beat) => {
+		expect(
+			parseEventDocument("test-event.md", documentWithBeat(beat)),
+		).toMatchObject({ beat });
+	});
+
+	it.each(invalidBeatIdentityCases)("rejects %s", (_name, beat) => {
+		expect(() =>
+			parseEventDocument("test-event.md", documentWithBeat(beat)),
+		).toThrow();
+	});
+
+	it("rejects duplicate event source URLs for a beat", () => {
+		expect(() =>
+			parseEventDocument(
+				"test-event.md",
+				documentWithBeat(voteRevoteBeat, [
+					...beatSources,
+					{ ...beatSources[0], title: "Duplicate mission report" },
+				]),
+			),
+		).toThrow();
+	});
+
+	it.each(invalidBeatRouteCases)("rejects %s", (_name, beat) => {
+		expect(() =>
+			parseEventDocument("test-event.md", documentWithBeat(beat)),
+		).toThrow();
+	});
+
+	it.each(invalidBeatStructuralCases)("rejects %s", (_name, beat) => {
+		expect(() =>
+			parseEventDocument("test-event.md", documentWithBeat(beat)),
+		).toThrow();
 	});
 
 	it("accepts historical leap days without modern Gregorian assumptions", () => {
