@@ -284,6 +284,25 @@ describe("full catalog validation", () => {
 		]);
 	});
 
+	it("uses natural classroom language in the Apollo choice prompts", async () => {
+		const events = await loadEventCatalog("content/events");
+		const beat = events.find(({ slug }) => slug === "apollo-11-1969")?.beat;
+		const commitment = beat?.stages.find(
+			(stage) => stage.phase === "commitment",
+		);
+		const revision = beat?.stages.find((stage) => stage.phase === "revision");
+
+		expect(beat?.choices.find(({ id }) => id === "uncertain")?.label).toBe(
+			"Nog niet zeker",
+		);
+		expect(commitment?.phase === "commitment" && commitment.prompt).toBe(
+			"Kies één antwoord. Je mag straks nog veranderen.",
+		);
+		expect(revision?.phase === "revision" && revision.prompt).toBe(
+			"Kies opnieuw. Blijf je bij je antwoord of verander je?",
+		);
+	});
+
 	it("publishes Apollo 11 as the first runnable vote-revote beat", async () => {
 		const events = await loadEventCatalog("content/events");
 		const apollo = events.find(({ slug }) => slug === "apollo-11-1969");
