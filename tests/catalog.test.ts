@@ -11,6 +11,14 @@ import {
 	voteRevoteBeat,
 } from "./fixtures/interactive-beat.js";
 
+const voteRevoteBeatV2 = {
+	...voteRevoteBeat,
+	version: 2,
+	responseMethod: "response-cards",
+	vocationalConnection:
+		"Vergelijk de beslissing met hedendaagse veiligheidsprocedures.",
+} as const;
+
 const validDocument = `---
 title: Test event
 date:
@@ -65,6 +73,15 @@ describe("event document validation", () => {
 		).toMatchObject({ beat: voteRevoteBeat });
 	});
 
+	it("accepts version 2 while retaining version 1", () => {
+		expect(
+			parseEventDocument("test-event.md", documentWithBeat(voteRevoteBeatV2)),
+		).toMatchObject({ beat: voteRevoteBeatV2 });
+		expect(
+			parseEventDocument("test-event.md", documentWithBeat(voteRevoteBeat)),
+		).toMatchObject({ beat: voteRevoteBeat });
+	});
+
 	it.each([
 		["source duel", sourceDuelBeat],
 		["context-bound decision", contextDecisionBeat],
@@ -99,6 +116,39 @@ describe("event document validation", () => {
 	});
 
 	it.each(invalidBeatStructuralCases)("rejects %s", (_name, beat) => {
+		expect(() =>
+			parseEventDocument("test-event.md", documentWithBeat(beat)),
+		).toThrow();
+	});
+
+	it("keeps version fields strict across both beat versions", () => {
+		const { responseMethod: _responseMethod, ...missingResponseMethod } =
+			voteRevoteBeatV2;
+		expect(() =>
+			parseEventDocument(
+				"test-event.md",
+				documentWithBeat(missingResponseMethod),
+			),
+		).toThrow();
+		expect(() =>
+			parseEventDocument(
+				"test-event.md",
+				documentWithBeat({
+					...voteRevoteBeat,
+					responseMethod: "response-cards",
+				}),
+			),
+		).toThrow();
+	});
+
+	it.each([
+		["unknown response method", { ...voteRevoteBeatV2, responseMethod: "app" }],
+		[
+			"long vocational connection",
+			{ ...voteRevoteBeatV2, vocationalConnection: "x".repeat(241) },
+		],
+		["unknown version 2 field", { ...voteRevoteBeatV2, autoplay: true }],
+	])("rejects version 2 with %s", (_name, beat) => {
 		expect(() =>
 			parseEventDocument("test-event.md", documentWithBeat(beat)),
 		).toThrow();
