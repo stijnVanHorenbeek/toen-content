@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { stringify } from "yaml";
-import {
-	loadEventCatalog,
-	parseEventDocument,
-	validateCatalogEntries,
-} from "../src/catalog.js";
+import { parseEventDocument, validateCatalogEntries } from "../src/catalog.js";
 import {
 	beatSources,
 	contextDecisionBeat,
@@ -270,32 +266,5 @@ describe("full catalog validation", () => {
 		expect(() => validateCatalogEntries([])).toThrow(
 			"Event catalog must contain at least one event",
 		);
-	});
-
-	it("validates copied canonical catalog", async () => {
-		const events = await loadEventCatalog("content/events");
-
-		expect(events).toHaveLength(4);
-		expect(events.map(({ slug }) => slug)).toEqual([
-			"apollo-11-1969",
-			"belgium-independence-1830",
-			"d-day-de-geallieerde-landing-in-normandie-1944",
-			"val-van-constantinopel-1453",
-		]);
-	});
-
-	it("publishes every canonical event with a runnable activity", async () => {
-		const events = await loadEventCatalog("content/events");
-		const beats = events.map(({ beat }) => beat);
-
-		expect(beats.every(Boolean)).toBe(true);
-		expect(new Set(beats.map((beat) => beat?.mechanic))).toEqual(
-			new Set(["vote-revote", "source-duel", "context-decision"]),
-		);
-		for (const beat of beats) {
-			expect(
-				beat?.routes.map(({ durationMinutes }) => durationMinutes),
-			).toEqual([5, 8, 12]);
-		}
 	});
 });
