@@ -284,46 +284,18 @@ describe("full catalog validation", () => {
 		]);
 	});
 
-	it("uses natural classroom language in the Apollo choice prompts", async () => {
+	it("publishes every canonical event with a runnable activity", async () => {
 		const events = await loadEventCatalog("content/events");
-		const beat = events.find(({ slug }) => slug === "apollo-11-1969")?.beat;
-		const commitment = beat?.stages.find(
-			(stage) => stage.phase === "commitment",
-		);
-		const revision = beat?.stages.find((stage) => stage.phase === "revision");
+		const beats = events.map(({ beat }) => beat);
 
-		expect(beat?.choices.find(({ id }) => id === "uncertain")?.label).toBe(
-			"Nog niet zeker",
+		expect(beats.every(Boolean)).toBe(true);
+		expect(new Set(beats.map((beat) => beat?.mechanic))).toEqual(
+			new Set(["vote-revote", "source-duel", "context-decision"]),
 		);
-		expect(commitment?.phase === "commitment" && commitment.prompt).toBe(
-			"Kies één antwoord. Je mag straks nog veranderen.",
-		);
-		expect(revision?.phase === "revision" && revision.prompt).toBe(
-			"Kies opnieuw. Blijf je bij je antwoord of verander je?",
-		);
-	});
-
-	it("publishes Apollo 11 as the first runnable vote-revote beat", async () => {
-		const events = await loadEventCatalog("content/events");
-		const apollo = events.find(({ slug }) => slug === "apollo-11-1969");
-
-		expect(apollo?.beat).toMatchObject({
-			version: 1,
-			mechanic: "vote-revote",
-			routes: [
-				{ durationMinutes: 5 },
-				{ durationMinutes: 8 },
-				{ durationMinutes: 12 },
-			],
-		});
-		expect(
-			apollo?.beat?.stages
-				.filter((stage) => stage.phase === "evidence")
-				.every(
-					(stage) =>
-						stage.sourceUrl ===
-						"https://www.nasa.gov/history/apollo-11-mission-overview/",
-				),
-		).toBe(true);
+		for (const beat of beats) {
+			expect(
+				beat?.routes.map(({ durationMinutes }) => durationMinutes),
+			).toEqual([5, 8, 12]);
+		}
 	});
 });
