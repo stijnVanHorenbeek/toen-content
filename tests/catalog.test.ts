@@ -283,4 +283,28 @@ describe("full catalog validation", () => {
 			"val-van-constantinopel-1453",
 		]);
 	});
+
+	it("publishes Apollo 11 as the first runnable vote-revote beat", async () => {
+		const events = await loadEventCatalog("content/events");
+		const apollo = events.find(({ slug }) => slug === "apollo-11-1969");
+
+		expect(apollo?.beat).toMatchObject({
+			version: 1,
+			mechanic: "vote-revote",
+			routes: [
+				{ durationMinutes: 5 },
+				{ durationMinutes: 8 },
+				{ durationMinutes: 12 },
+			],
+		});
+		expect(
+			apollo?.beat?.stages
+				.filter((stage) => stage.phase === "evidence")
+				.every(
+					(stage) =>
+						stage.sourceUrl ===
+						"https://www.nasa.gov/history/apollo-11-mission-overview/",
+				),
+		).toBe(true);
+	});
 });
