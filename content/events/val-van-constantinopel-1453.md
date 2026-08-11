@@ -35,7 +35,7 @@ beat:
       suggestedSeconds: 20
       teacherPrompt: Lees de situatie. Geef nog geen cijfers.
       expectedStudentAction: Bekijk de mogelijke oorzaken.
-      stimulus: Constantinopel heeft sterke muren. Mehmed II brengt een enorm leger, een vloot en zwaar geschut mee. Subtiliteit was duidelijk niet het plan.
+      stimulus: Constantinopel heeft sterke muren. Mehmed II brengt een enorm leger, een vloot en zwaar geschut mee. De verdedigers staan onder druk op meerdere fronten.
     - id: commitment
       phase: commitment
       suggestedSeconds: 20
