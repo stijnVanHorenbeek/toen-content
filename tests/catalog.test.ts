@@ -1,6 +1,14 @@
+import { createHash } from "node:crypto";
+import { mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { stringify } from "yaml";
-import { parseEventDocument, validateCatalogEntries } from "../src/catalog.js";
+import {
+	loadEventCatalog,
+	parseEventDocument,
+	validateCatalogEntries,
+} from "../src/catalog.js";
 import {
 	beatSources,
 	contextDecisionBeat,
@@ -60,6 +68,19 @@ function documentWithBeat(
 }
 
 describe("event document validation", () => {
+	it("shares one hashed Beat V2 parity fixture with the application schema", async () => {
+		const document = await readFile(
+			path.join(process.cwd(), "tests/fixtures/release-parity-event.md"),
+			"utf8",
+		);
+		expect(createHash("sha256").update(document).digest("hex")).toBe(
+			"b0d2817528fda7d084b3a1414814ec9bc975ac4aeca143769af0aae5a1179fb3",
+		);
+		expect(
+			parseEventDocument("release-parity-event-1969.md", document),
+		).toMatchObject({ beat: { version: 2, responseMethod: "response-cards" } });
+	});
+
 	it("derives slug from canonical filename and parses valid content", () => {
 		const event = parseEventDocument("test-event.md", validDocument);
 
@@ -167,6 +188,39 @@ describe("event document validation", () => {
 			month: 2,
 			day: 29,
 		});
+	});
+
+	it("enforces release projection bounds before publication", () => {
+		expect(() =>
+			parseEventDocument(
+				"test-event.md",
+				replaceDocument("title: Test event", `title: ${"x".repeat(161)}`),
+			),
+		).toThrow();
+		expect(() =>
+			parseEventDocument(
+				"test-event.md",
+				validDocument.replace("Event body.", "x".repeat(20_001)),
+			),
+		).toThrow();
+		expect(() =>
+			parseEventDocument(
+				"test-event.md",
+				replaceDocument(
+					"topics:\n  - wetenschap",
+					"topics:\n  - wetenschap\n  - wetenschap",
+				),
+			),
+		).toThrow();
+		expect(() =>
+			parseEventDocument(
+				"test-event.md",
+				replaceDocument(
+					"    url: https://example.com/source",
+					"    url: https://example.com/source\n  - title: Duplicate\n    publisher: Test publisher\n    url: https://example.com/source",
+				),
+			),
+		).toThrow();
 	});
 
 	it("rejects unknown frontmatter fields", () => {
@@ -316,5 +370,35 @@ describe("full catalog validation", () => {
 		expect(() => validateCatalogEntries([])).toThrow(
 			"Event catalog must contain at least one event",
 		);
+	});
+
+	it("rejects a symbolic-link catalog root", async () => {
+		const root = await mkdtemp(path.join(tmpdir(), "toen-content-link-"));
+		const events = path.join(root, "events");
+		const alias = path.join(root, "events-alias");
+		await mkdir(events);
+		await writeFile(path.join(events, "test-event.md"), validDocument);
+		await symlink(events, alias, "dir");
+
+		await expect(loadEventCatalog(alias)).rejects.toThrow(
+			"catalog root must be a real directory",
+		);
+	});
+
+	it("rejects conflicting visible labels across events", () => {
+		const first = replaceDocument(
+			"topics:\n  - wetenschap",
+			"topics:\n  - wetenschap\ntopicLabels:\n  wetenschap: Wetenschap",
+		);
+		const second = first.replace(
+			"wetenschap: Wetenschap",
+			"wetenschap: Andere naam",
+		);
+		expect(() =>
+			validateCatalogEntries([
+				{ filename: "first.md", document: first },
+				{ filename: "second.md", document: second },
+			]),
+		).toThrow("Conflicting topic label");
 	});
 });

@@ -1,4 +1,4 @@
-import { readdir, readFile } from "node:fs/promises";
+import { lstat, readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { toMarkdown } from "mdast-util-to-markdown";
@@ -7,6 +7,21 @@ import { z } from "zod";
 
 const canonicalFilenamePattern = /^([a-z0-9]+(?:-[a-z0-9]+)*)\.md$/;
 const frontmatterPattern = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/;
+const catalogLimits = {
+	events: 10_000,
+	rawDocumentBytes: 65_536,
+	titleCharacters: 160,
+	summaryCharacters: 500,
+	bodyCharacters: 20_000,
+	topics: 16,
+	topicLabelCharacters: 120,
+	profiles: 16,
+	sources: 16,
+	sourceTitleCharacters: 240,
+	sourcePublisherCharacters: 160,
+	sourceUrlCharacters: 2_048,
+	readConcurrency: 16,
+} as const;
 
 const historicalYearSchema = {
 	year: z.int().positive(),
@@ -61,9 +76,15 @@ const httpUrlSchema = z.url().refine((value) => {
 });
 
 const sourceSchema = z.strictObject({
-	title: z.string().trim().min(1),
-	publisher: z.string().trim().min(1),
-	url: httpUrlSchema,
+	title: z.string().trim().min(1).max(catalogLimits.sourceTitleCharacters),
+	publisher: z
+		.string()
+		.trim()
+		.min(1)
+		.max(catalogLimits.sourcePublisherCharacters),
+	url: httpUrlSchema.refine(
+		(value) => value.length <= catalogLimits.sourceUrlCharacters,
+	),
 });
 
 const beatTextSchema = (maximumLength: number) =>
@@ -596,18 +617,47 @@ function isSupportedMarkdown(markdown: string): boolean {
 	return normalized.trimEnd() === markdown.trimEnd();
 }
 
+const uniqueArray = <Value>(values: Value[]) =>
+	new Set(values).size === values.length;
+
 const eventFrontmatterSchema = z
 	.strictObject({
-		title: z.string().trim().min(1),
+		title: z.string().trim().min(1).max(catalogLimits.titleCharacters),
 		date: historicalDateSchema,
-		summary: z.string().trim().min(1),
-		topics: z.array(topicIdSchema).min(1),
-		topicLabels: z.record(topicIdSchema, z.string().trim().min(1)).optional(),
-		profiles: z.array(z.enum(profileIds)).min(1),
-		sources: z.array(sourceSchema).min(1),
+		summary: z.string().trim().min(1).max(catalogLimits.summaryCharacters),
+		topics: z
+			.array(topicIdSchema)
+			.min(1)
+			.max(catalogLimits.topics)
+			.refine(uniqueArray),
+		topicLabels: z
+			.record(
+				topicIdSchema,
+				z.string().trim().min(1).max(catalogLimits.topicLabelCharacters),
+			)
+			.optional(),
+		profiles: z
+			.array(z.enum(profileIds))
+			.min(1)
+			.max(catalogLimits.profiles)
+			.refine(uniqueArray),
+		sources: z.array(sourceSchema).min(1).max(catalogLimits.sources),
 		beat: interactiveBeatSchema.optional(),
 	})
 	.superRefine((value, context) => {
+		if (!value.beat) {
+			const sourceUrls = new Set<string>();
+			for (const [index, source] of value.sources.entries()) {
+				if (sourceUrls.has(source.url)) {
+					context.addIssue({
+						code: "custom",
+						message: "Event source URLs must be unique",
+						path: ["sources", index, "url"],
+					});
+				}
+				sourceUrls.add(source.url);
+			}
+		}
 		for (const topic of Object.keys(value.topicLabels ?? {})) {
 			if (value.topics.includes(topic)) continue;
 			context.addIssue({
@@ -639,6 +689,11 @@ function slugFromFilename(filename: string): string {
 }
 
 export function parseEventDocument(filename: string, document: string): Event {
+	if (Buffer.byteLength(document) > catalogLimits.rawDocumentBytes) {
+		throw new Error(
+			`Event document ${filename} exceeds ${catalogLimits.rawDocumentBytes} bytes`,
+		);
+	}
 	const slug = slugFromFilename(filename);
 	const match = frontmatterPattern.exec(document);
 	if (!match) {
@@ -652,6 +707,11 @@ export function parseEventDocument(filename: string, document: string): Event {
 	if (!body) {
 		throw new Error(`Event document ${filename} has no Markdown body`);
 	}
+	if (body.length > catalogLimits.bodyCharacters) {
+		throw new Error(
+			`Event document ${filename} body exceeds ${catalogLimits.bodyCharacters} characters`,
+		);
+	}
 	if (!isSupportedMarkdown(body)) {
 		throw new Error(`Event document ${filename} contains unsupported Markdown`);
 	}
@@ -663,9 +723,12 @@ export function validateCatalogEntries(entries: CatalogEntry[]): Event[] {
 	if (entries.length === 0) {
 		throw new Error("Event catalog must contain at least one event");
 	}
+	if (entries.length > catalogLimits.events) {
+		throw new Error(`Event catalog exceeds ${catalogLimits.events} events`);
+	}
 
 	const slugs = new Set<string>();
-	return entries
+	const events = entries
 		.toSorted((left, right) => left.filename.localeCompare(right.filename))
 		.map(({ filename, document }) => {
 			const slug = slugFromFilename(filename);
@@ -676,22 +739,74 @@ export function validateCatalogEntries(entries: CatalogEntry[]): Event[] {
 
 			return parseEventDocument(filename, document);
 		});
+	const topicLabels = new Map<string, string>();
+	for (const event of events) {
+		for (const [topic, label] of Object.entries(event.topicLabels ?? {})) {
+			const existing = topicLabels.get(topic);
+			if (existing && existing !== label) {
+				throw new Error(
+					`Conflicting topic label for ${topic}: ${existing} / ${label}`,
+				);
+			}
+			topicLabels.set(topic, label);
+		}
+	}
+	return events;
 }
 
 export async function loadEventCatalog(directory: string): Promise<Event[]> {
+	const rootMetadata = await lstat(directory);
+	if (rootMetadata.isSymbolicLink() || !rootMetadata.isDirectory()) {
+		throw new Error("Event catalog root must be a real directory");
+	}
 	const directoryEntries = await readdir(directory, { withFileTypes: true });
-	const entries = await Promise.all(
-		directoryEntries.map(async (entry): Promise<CatalogEntry> => {
+	if (directoryEntries.length > catalogLimits.events) {
+		throw new Error(`Event catalog exceeds ${catalogLimits.events} events`);
+	}
+	const sortedEntries = directoryEntries.toSorted((left, right) =>
+		left.name.localeCompare(right.name),
+	);
+	const entries = new Array<CatalogEntry>(sortedEntries.length);
+	await mapBounded(
+		sortedEntries,
+		catalogLimits.readConcurrency,
+		async (entry, index) => {
 			if (!entry.isFile()) {
 				throw new Error(`Invalid event catalog entry: ${entry.name}`);
 			}
-
-			return {
+			const filePath = path.join(directory, entry.name);
+			const metadata = await stat(filePath);
+			if (metadata.size > catalogLimits.rawDocumentBytes) {
+				throw new Error(
+					`Event document ${entry.name} exceeds ${catalogLimits.rawDocumentBytes} bytes`,
+				);
+			}
+			entries[index] = {
 				filename: entry.name,
-				document: await readFile(path.join(directory, entry.name), "utf8"),
+				document: await readFile(filePath, "utf8"),
 			};
-		}),
+		},
 	);
 
 	return validateCatalogEntries(entries);
+}
+
+async function mapBounded<Value>(
+	values: Value[],
+	concurrency: number,
+	operation: (value: Value, index: number) => Promise<void>,
+): Promise<void> {
+	let nextIndex = 0;
+	async function worker() {
+		while (nextIndex < values.length) {
+			const index = nextIndex;
+			nextIndex += 1;
+			await operation(values[index], index);
+		}
+	}
+	await Promise.all(
+		Array.from({ length: Math.min(concurrency, values.length) }, () =>
+			worker(),
+		),
+	);
 }
