@@ -10,6 +10,10 @@ import {
 	validateCatalogEntries,
 } from "../src/catalog.js";
 import {
+	loadReleaseActivationLock,
+	loadReleaseRequests,
+} from "../src/release-requests.js";
+import {
 	beatSources,
 	contextDecisionBeat,
 	invalidBeatIdentityCases,
@@ -341,6 +345,70 @@ Tekst met *nadruk*, **sterke nadruk** en een [veilige link](https://example.com)
 		expect(() => parseEventDocument("test-event.md", document)).toThrow(
 			"has no Markdown body",
 		);
+	});
+});
+
+describe("release request reader", () => {
+	it("accepts an integrity-checked exact-SHA request", async () => {
+		const root = await mkdtemp(path.join(tmpdir(), "toen-release-request-"));
+		const buildUuid = "123e4567-e89b-42d3-a456-426614174000";
+		const core = {
+			kind: "toen-release-request",
+			schemaVersion: 1,
+			buildUuid,
+			appSha: "a".repeat(40),
+			contentSha: "b".repeat(40),
+		};
+		const integritySha256 = createHash("sha256")
+			.update(JSON.stringify(core))
+			.digest("hex");
+		await writeFile(
+			path.join(root, `${buildUuid}.json`),
+			`${JSON.stringify({ ...core, integritySha256 })}\n`,
+		);
+		await expect(loadReleaseRequests(root, root)).resolves.toEqual([
+			{ ...core, integritySha256 },
+		]);
+	});
+
+	it("accepts an integrity-checked activation lock", async () => {
+		const root = await mkdtemp(path.join(tmpdir(), "toen-release-lock-"));
+		const core = {
+			kind: "toen-release-activation-lock",
+			schemaVersion: 1,
+			ownerId: "223e4567-e89b-42d3-a456-426614174000",
+			appSha: "a".repeat(40),
+			contentSha: "b".repeat(40),
+			state: "active",
+			buildUuid: "323e4567-e89b-42d3-a456-426614174000",
+		};
+		const integritySha256 = createHash("sha256")
+			.update(JSON.stringify(core))
+			.digest("hex");
+		const filePath = path.join(root, "activation-lock.json");
+		await writeFile(
+			filePath,
+			`${JSON.stringify({ ...core, integritySha256 })}\n`,
+		);
+		await expect(loadReleaseActivationLock(filePath, root)).resolves.toEqual({
+			...core,
+			integritySha256,
+		});
+	});
+
+	it("rejects unexpected files and symlinked roots", async () => {
+		const root = await mkdtemp(
+			path.join(tmpdir(), "toen-release-request-bad-"),
+		);
+		await writeFile(path.join(root, "unexpected.json"), "{}\n");
+		await expect(loadReleaseRequests(root, root)).rejects.toThrow(
+			"Invalid release request filename",
+		);
+		const linked = await mkdtemp(path.join(tmpdir(), "toen-release-link-"));
+		await symlink(root, path.join(linked, "requests"), "dir");
+		await expect(
+			loadReleaseRequests(path.join(linked, "requests"), linked),
+		).rejects.toThrow("real directory");
 	});
 });
 
